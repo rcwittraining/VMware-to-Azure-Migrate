@@ -155,10 +155,52 @@
     }
   }
 
+  function seedThrough(stepId) {
+    const idx = STEPS.findIndex((s) => s.id === stepId);
+    for (let i = 0; i < idx; i++) {
+      const s = STEPS[i];
+      s.tasks.forEach((t) => {
+        state.done[`${s.id}:${t.id}`] = true;
+      });
+    }
+    state.azureAuthed = true;
+    state.projectCreated = true;
+    state.projectKey = state.projectKey || generateKey(LAB.creds.applianceName);
+    state.keyGenPhase = "ready";
+    state.ovaDownloaded = true;
+    if (idx > STEPS.findIndex((s) => s.id === "vsphere-ova")) {
+      state.vcAuthed = true;
+      state.ovfDeployed = true;
+      state.poweredOn = true;
+    }
+  }
+
+  function openVcenter() {
+    seedThrough("vsphere-ova");
+    state.screen = "lab";
+    if (!state.startedAt) state.startedAt = Date.now();
+    state.discoverOpen = false;
+    goStep(STEPS.findIndex((s) => s.id === "vsphere-ova"));
+  }
+
+  function openAppliance() {
+    seedThrough("appl-register");
+    state.screen = "lab";
+    if (!state.startedAt) state.startedAt = Date.now();
+    goStep(STEPS.findIndex((s) => s.id === "appl-register"));
+  }
+
+  function openPortal() {
+    state.screen = "lab";
+    if (!state.startedAt) state.startedAt = Date.now();
+    const i = STEPS.findIndex((s) => s.sim === "portal" && s.id === "create-project");
+    goStep(state.azureAuthed ? (state.projectCreated ? STEPS.findIndex((s) => s.id === "discover-key") : i) : 0);
+  }
+
   function goStep(i) {
     if (i > highestUnlocked()) {
-      toast("Complete the current module before unlocking this one.", "err");
-      return;
+      // Allow console jumps; seed earlier modules so the student is not blocked
+      seedThrough(STEPS[i].id);
     }
     state.step = i;
     const s = STEPS[i];
@@ -229,6 +271,7 @@
             </div>
             <div class="cta-row">
               <button class="btn btn-primary" id="btn-start">Start lab</button>
+              <button class="btn btn-ghost" id="btn-open-vcenter">Open vCenter now</button>
               <button class="btn btn-ghost" id="btn-guide">Open student guide</button>
             </div>
             <p class="lede" style="margin-top:18px;font-size:13px;color:#8aa0b8">No Azure subscription or vCenter is required. Every blade, wizard, and appliance check is simulated. Follow the coach panel on the right after you start.</p>
@@ -317,8 +360,15 @@
           <section class="canvas">
             <div class="sim-chrome">
               <div class="traffic"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+              <select class="mod-pick" id="mod-pick">
+                ${STEPS.map((s, i) => `<option value="${i}" ${i === state.step ? "selected" : ""}>${i + 1}. ${s.title}</option>`).join("")}
+              </select>
+              <div class="console-switch">
+                <button type="button" id="sw-portal" class="${step.sim === "portal" ? "on" : ""}">Azure</button>
+                <button type="button" id="sw-vc" class="${step.sim === "vsphere" ? "on" : ""}">vCenter</button>
+                <button type="button" id="sw-appl" class="${step.sim === "appliance" ? "on" : ""}">Appliance</button>
+              </div>
               <div class="urlbar">${step.url}</div>
-              <span style="font-size:11px;color:#999">${step.sim === "portal" ? "Microsoft Azure" : step.sim === "vsphere" ? "vSphere Client" : step.sim === "appliance" ? "Appliance Configuration Manager" : "Lab"}</span>
             </div>
             <div class="sim-body" id="sim-body">${renderSim(step)}</div>
           </section>
@@ -637,7 +687,13 @@
                     <button class="btn btn-ghost btn-sm" id="copy-key" style="color:#323130;border:1px solid #d2d0ce">Copy key</button>
                     <button class="btn btn-primary btn-sm" id="dl-ova">Download OVA (VMware)</button>
                   </div>
-                  ${state.ovaDownloaded ? `<div class="okbox mt12">Downloaded AzureMigrateAppliance.ova (simulated 12.4 GB) to the jump box.</div>` : ""}
+                  ${state.ovaDownloaded ? `
+                    <div class="okbox mt12">Downloaded AzureMigrateAppliance.ova (simulated 12.4 GB) to the jump box.</div>
+                    <div class="jump-vc">
+                      <h4>Next: import the OVA in vCenter</h4>
+                      <p style="margin:0 0 10px;font-size:13px;color:#c5ccd6">Sign in to <b>vcenter.contoso.local</b> as <span class="mono">migrate-svc@vsphere.local</span> / <span class="mono">VMware@123</span></p>
+                      <button class="btn btn-primary" id="btn-jump-vc">Open vSphere Client</button>
+                    </div>` : ""}
                 `
             }
           </div>
@@ -988,11 +1044,11 @@
           <div style="width:400px;background:#22262e;border:1px solid #343b48;padding:24px;border-radius:8px">
             <div class="vc-logo" style="margin-bottom:8px">VMware vSphere Client</div>
             <div class="muted" style="font-size:12px;margin-bottom:14px">${LAB.creds.vcenter}</div>
-            <div class="form-row"><label>User name</label><input id="vc-u" type="text" value="${esc(state.vcLoginU)}" /></div>
-            <div class="form-row"><label>Password</label><input id="vc-p" type="password" value="${esc(state.vcLoginP)}" /></div>
+            <div class="form-row"><label>User name</label><input id="vc-u" type="text" value="${esc(state.vcLoginU || LAB.creds.vcenterUser)}" /></div>
+            <div class="form-row"><label>Password</label><input id="vc-p" type="password" value="${esc(state.vcLoginP)}" placeholder="VMware@123" /></div>
             ${state.vcError ? `<div class="errbox mb8">${state.vcError}</div>` : ""}
             <button class="btn btn-primary" id="vc-login">Login</button>
-            <p class="muted mt12" style="font-size:12px">Use ${LAB.creds.vcenterUser}</p>
+            <p class="muted mt12" style="font-size:12px">User: ${LAB.creds.vcenterUser}<br>Password: ${LAB.creds.vcenterPass}</p>
           </div>
         </div>`;
     }
@@ -1306,6 +1362,12 @@
       state.startedAt = Date.now();
       render();
     });
+    $("#btn-open-vcenter")?.addEventListener("click", openVcenter);
+    $("#btn-jump-vc")?.addEventListener("click", openVcenter);
+    $("#sw-portal")?.addEventListener("click", openPortal);
+    $("#sw-vc")?.addEventListener("click", openVcenter);
+    $("#sw-appl")?.addEventListener("click", openAppliance);
+    $("#mod-pick")?.addEventListener("change", (e) => goStep(Number(e.target.value)));
     $("#btn-guide")?.addEventListener("click", () => window.open("lab-guide.html", "_blank"));
     $("#btn-brief")?.addEventListener("click", () => {
       state.screen = "splash";
@@ -1420,7 +1482,7 @@
     $("#dl-ova")?.addEventListener("click", () => {
       state.ovaDownloaded = true;
       if (STEPS[state.step].id === "discover-key") mark("dl-ova", 15);
-      render();
+      toast("OVA downloaded. Use Open vSphere Client to sign in to vCenter.", "ok");
     });
 
     $("#btn-open-disc")?.addEventListener("click", () => {
