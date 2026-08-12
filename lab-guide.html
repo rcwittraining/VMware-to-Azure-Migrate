@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AZ-MIG-201 Student Guide · Azure Migrate vCenter to Azure</title>
+  <style>
+    :root { --azure:#0078d4; --ink:#1b1b1b; --muted:#605e5c; --line:#e1dfdd; }
+    body { font-family: "Segoe UI", system-ui, sans-serif; margin: 0; color: var(--ink); background: #f3f2f1; line-height: 1.55; }
+    header { background: #0b1a33; color: #fff; padding: 32px 28px; }
+    header .k { color: #7ec8ff; font-size: 12px; letter-spacing: 1.4px; text-transform: uppercase; font-weight: 700; }
+    h1 { margin: 6px 0 8px; font-size: 28px; }
+    header p { margin: 0; color: #c9d7e6; max-width: 820px; }
+    main { max-width: 900px; margin: 0 auto; padding: 28px 20px 80px; }
+    .card { background: #fff; border: 1px solid var(--line); padding: 18px 20px; margin: 16px 0; }
+    h2 { color: var(--azure); font-size: 20px; margin: 28px 0 8px; }
+    h3 { font-size: 16px; margin: 18px 0 8px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px; vertical-align: top; }
+    th { font-size: 12px; color: var(--muted); }
+    code, .mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 13px; background: #f3f2f1; padding: 1px 5px; }
+    .note { border-left: 4px solid var(--azure); background: #deecf9; padding: 10px 12px; }
+    .warn { border-left: 4px solid #ffb900; background: #fff4ce; padding: 10px 12px; }
+    ol.steps > li { margin: 8px 0; }
+    .meta { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 14px; font-size: 13px; color: #9bb3cc; }
+    a { color: var(--azure); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="k">Contoso Cloud Academy · Hands-on lab</div>
+    <h1>AZ-MIG-201 · Create an Azure Migrate project and migrate a vCenter VM</h1>
+    <p>Student and instructor guide for the interactive simulator. The lab mirrors Microsoft’s agentless VMware path: project → appliance OVA → Configuration Manager registration → discovery → assessment → replication → test migration → planned cutover.</p>
+    <div class="meta">
+      <span>Duration 90–120 min</span>
+      <span>Level Intermediate</span>
+      <span>Maps to AZ-104 / AZ-305 / AZ-801</span>
+    </div>
+  </header>
+  <main>
+    <div class="card">
+      <strong>How to use the simulator.</strong> Open <a href="index.html">index.html</a> (or the lab URL). Complete tasks in the coach panel. The Azure portal, vSphere Client, and Appliance Configuration Manager are simulated — no subscription is required. An <em>Instructor: complete this module</em> control can skip a stuck step while seeding the required state.
+    </div>
+
+    <h2>1. Scenario</h2>
+    <p>Contoso Ltd. is leaving its Chennai colocation facility. Wave 1 is four VMware VMs on <code>vcenter.contoso.local</code>. Leadership wants a repeatable Azure Migrate factory. Your job is to stand up the project and appliance, then migrate the customer-facing web server <strong>WEB-01</strong> with a planned cutover.</p>
+
+    <h3>On-premises fabric</h3>
+    <table>
+      <tr><th>Item</th><th>Value</th></tr>
+      <tr><td>vCenter</td><td>8.0.3 · vcenter.contoso.local · 10.10.1.10</td></tr>
+      <tr><td>Datacenter / cluster</td><td>Contoso-DC1 / Prod-Cluster (esxi-prod-01/02)</td></tr>
+      <tr><td>Service account</td><td>migrate-svc@vsphere.local / VMware@123</td></tr>
+      <tr><td>Appliance target</td><td>AzureMigrateAppl · 8 vCPU / 32 GB / 80 GB · VM-Network · 10.10.1.50</td></tr>
+    </table>
+
+    <h3>Inventory (Wave 1)</h3>
+    <table>
+      <tr><th>VM</th><th>OS / apps</th><th>Size</th><th>Notes</th></tr>
+      <tr><td>WEB-01 ★</td><td>Windows Server 2022 · IIS / .NET 8</td><td>4 / 16 GB · 80 GB</td><td>Required cutover target</td></tr>
+      <tr><td>APP-01</td><td>Windows Server 2019 · Orders API</td><td>4 / 8 GB · 127 GB</td><td>Assess only</td></tr>
+      <tr><td>SQL-01</td><td>WS2022 + SQL 2022</td><td>8 / 32 GB · 256+500 GB</td><td>Ready with conditions</td></tr>
+      <tr><td>LINUX-WEB-01</td><td>Ubuntu 22.04 · nginx</td><td>2 / 4 GB · 64 GB</td><td>Assess only</td></tr>
+    </table>
+
+    <h3>Azure landing zone</h3>
+    <table>
+      <tr><th>Item</th><th>Value</th></tr>
+      <tr><td>User</td><td>admin@contoso.com / Contoso@Azure2026 (Owner)</td></tr>
+      <tr><td>Subscription</td><td>Contoso-Prod</td></tr>
+      <tr><td>Resource group / project</td><td>rg-migrate-prod / contoso-vmware-migrate</td></tr>
+      <tr><td>Project geography</td><td>Asia (metadata only)</td></tr>
+      <tr><td>Target</td><td>East US · vnet-landing-eus / snet-web</td></tr>
+      <tr><td>Test VNet</td><td>vnet-test-eus / snet-test (no peering)</td></tr>
+      <tr><td>Appliance name</td><td>contosoappl01 (≤14 alphanumeric)</td></tr>
+    </table>
+
+    <h2>2. Architecture (agentless)</h2>
+    <div class="card">
+      <ol>
+        <li>Azure Migrate project holds metadata and orchestrates tools.</li>
+        <li>The appliance VM (OVA) runs Discovery, Assessment, DRA, and Gateway services.</li>
+        <li>Appliance talks to <strong>vCenter :443</strong> for inventory and snapshot orchestration.</li>
+        <li>For replication, appliance + <strong>VDDK</strong> reads disks from <strong>ESXi :902/443</strong> using CBT snapshots. No Mobility agent in the guest.</li>
+        <li>Replicated data is uploaded to Azure over <strong>TCP 443</strong>.</li>
+        <li>Test migration boots a copy in an isolated VNet. Planned migration shuts down the source, applies the last delta, and creates the production Azure VM.</li>
+      </ol>
+    </div>
+
+    <h2>3. Lab modules (do in order)</h2>
+    <h3>Module 0 — Sign in</h3>
+    <ol class="steps">
+      <li>Start the lab and sign in to the simulated portal as <code>admin@contoso.com</code>.</li>
+    </ol>
+
+    <h3>Module 1 — Create the Azure Migrate project</h3>
+    <ol class="steps">
+      <li>Search for <strong>Azure Migrate</strong> (do not jump via a random tile only — practice portal search).</li>
+      <li>Create project: RG <code>rg-migrate-prod</code>, name <code>contoso-vmware-migrate</code>, geography <strong>Asia</strong>.</li>
+      <li>Wait for Microsoft.Migrate and the Discovery/Migration tools to attach.</li>
+    </ol>
+    <div class="note">Geography is where metadata lives. You can still migrate WEB-01 to East US.</div>
+
+    <h3>Module 2 — Generate the project key and download the OVA</h3>
+    <ol class="steps">
+      <li>In Discovery and assessment, select <strong>Discover</strong>.</li>
+      <li>Machines virtualized? <strong>Yes, with VMware vSphere</strong>. Method: appliance.</li>
+      <li>Appliance name <code>contosoappl01</code> → <strong>Generate key</strong>. Do not close the blade while resources are created (Key Vault, storage, app registration).</li>
+      <li>Copy the project key. Download the VMware OVA.</li>
+    </ol>
+
+    <h3>Module 3 — Deploy the appliance on vCenter</h3>
+    <ol class="steps">
+      <li>Open the vSphere Client and sign in as <code>migrate-svc@vsphere.local</code>.</li>
+      <li>Deploy OVF Template: source OVA → name <code>AzureMigrateAppl</code> → folder Migrate → compute Prod-Cluster → vsanDatastore → Thick Lazy Zeroed → network <strong>VM-Network</strong> (not Isolated-Lab).</li>
+      <li>Power on. Confirm DHCP address <code>10.10.1.50</code>.</li>
+    </ol>
+
+    <h3>Module 4 — Configure and register the appliance</h3>
+    <ol class="steps">
+      <li>Open <code>https://10.10.1.50:44368</code>.</li>
+      <li>Run connectivity, time-sync, and URL checks.</li>
+      <li>Paste the project key → verify → wait for auto-update of Discovery, Assessment, DRA, Gateway.</li>
+      <li>Login with the device code as admin@contoso.com. Confirm registration against the project.</li>
+      <li>Install <strong>VDDK 8.0</strong> (required for agentless disk reads).</li>
+    </ol>
+
+    <h3>Module 5 — Start continuous discovery</h3>
+    <ol class="steps">
+      <li>Add credentials: friendly name <code>vcenter-prod</code>, user <code>migrate-svc@vsphere.local</code>.</li>
+      <li>Add discovery source <code>vcenter.contoso.local</code> port <code>443</code>.</li>
+      <li>Enable software inventory + agentless dependency analysis. Start discovery.</li>
+    </ol>
+    <div class="warn">Minimum for discovery: vCenter Read-only at datacenter with propagate. Add Guest Operations for software inventory. Replication later needs snapshot, datastore, and VM config privileges.</div>
+
+    <h3>Module 6 — Review inventory</h3>
+    <p>In the portal, wait until four servers appear. Open <strong>WEB-01</strong> and confirm VMware Tools, 80 GB OS disk, and IP 10.10.20.11.</p>
+
+    <h3>Module 7 — Assessment</h3>
+    <ol class="steps">
+      <li>Create assessment <code>Assess-Contoso-Wave1</code>, type Azure VM.</li>
+      <li>New group <code>Wave1-VMware</code> including WEB-01 (include all four in the lab).</li>
+      <li>Target East US, sizing <strong>Performance-based</strong>, pay-as-you-go.</li>
+      <li>Review readiness: SQL-01 is Ready with conditions because of data-disk IOPS.</li>
+    </ol>
+
+    <h3>Module 8 — Replicate WEB-01</h3>
+    <ol class="steps">
+      <li>Migration and modernization → Replicate → VMware → appliance <code>contosoappl01</code> → <strong>Agentless</strong>.</li>
+      <li>Select WEB-01. Target RG <code>rg-migrate-prod</code>, East US, <code>vnet-landing-eus</code> / <code>snet-web</code>, size Standard_D4s_v5. Enable Hybrid Benefit.</li>
+      <li>Wait until status is <strong>Protected (100%)</strong>. Initial replication uses a snapshot; CBT then ships deltas.</li>
+    </ol>
+
+    <h3>Module 9 — Test migration</h3>
+    <ol class="steps">
+      <li>Test migrate WEB-01 into <code>vnet-test-eus</code> (never the production VNet).</li>
+      <li>Confirm the test VM reaches Running. The source VM stays up; replication continues.</li>
+      <li>Clean up the test migration (deletes the test Azure VM and NICs).</li>
+    </ol>
+
+    <h3>Module 10 — Planned cutover</h3>
+    <ol class="steps">
+      <li>Migrate → <strong>Yes</strong>, shut down for a planned migration with no data loss.</li>
+      <li>Appliance powers off WEB-01 via vCenter, sends the last delta, creates the Azure VM (10.20.1.11).</li>
+      <li>Verify the VM is Running. Stop replication. Plan DNS cutover and source retirement on the next CAB window.</li>
+    </ol>
+
+    <h3>Module 11 — Knowledge check</h3>
+    <p>Pass with 70% or higher. Topics: project geography, appliance name rules, ports, VDDK, agentless vs agent-based, assessment types, test vs planned migration, appliance scale (10,000 VMs), vCenter roles.</p>
+
+    <h2>4. Ports and URLs (exam-ready)</h2>
+    <table>
+      <tr><th>From → To</th><th>Port</th><th>Why</th></tr>
+      <tr><td>Jump box → Appliance</td><td>44368 / 3389</td><td>Config Manager UI / RDP</td></tr>
+      <tr><td>Appliance → vCenter</td><td>443</td><td>Discovery, snapshots, orchestration</td></tr>
+      <tr><td>Appliance → ESXi</td><td>443 / 902</td><td>Inventory / NFC disk copy (replication)</td></tr>
+      <tr><td>Appliance → Azure</td><td>443</td><td>Control plane + replica data (direct or HTTP proxy)</td></tr>
+    </table>
+
+    <h2>5. Instructor notes</h2>
+    <ul>
+      <li>Expected key prefix: <code>CONTOSOAPPL01@MIGRATE@…</code> (generated in-sim).</li>
+      <li>Wrong appliance network (Isolated-Lab) is a deliberate fail path.</li>
+      <li>Unplanned migrate (no shutdown) is rejected so students practice the no-data-loss option.</li>
+      <li>Production would wait ≥24 hours of performance history before a sizing assessment; the simulator compresses that.</li>
+      <li>Official docs: <a href="https://learn.microsoft.com/en-us/azure/migrate/create-manage-projects">Create a project</a>, <a href="https://learn.microsoft.com/en-us/azure/migrate/vmware/how-to-set-up-appliance-vmware">Set up the VMware appliance</a>, <a href="https://learn.microsoft.com/en-us/azure/migrate/tutorial-discover-vmware">Discover VMware</a>, <a href="https://learn.microsoft.com/en-us/azure/migrate/server-migrate-overview">Agentless vs agent-based</a>.</li>
+    </ul>
+
+    <h2>6. Success criteria</h2>
+    <ul>
+      <li>Project and RG named to standard; appliance registered; VDDK installed.</li>
+      <li>Four VMs discovered; Wave1 assessment exists; WEB-01 Protected then Migrated.</li>
+      <li>Test migration used vnet-test-eus and was cleaned up.</li>
+      <li>Knowledge check ≥ 70%.</li>
+    </ul>
+  </main>
+</body>
+</html>
